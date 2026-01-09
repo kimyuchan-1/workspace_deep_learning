@@ -1,0 +1,232 @@
+class SimpleLinear(nn.Module):
+    def __init__(self, num_classes=33, image_size=64):
+        super(SimpleLinear, self).__init__()
+        input_size = 3 * image_size * image_size
+        self.fc1 = nn.Linear(input_size, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, num_classes)
+        self.dropout = nn.Dropout(0.5)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)
+        x = self.dropout(self.relu(self.fc1(x)))
+        x = self.dropout(self.relu(self.fc2(x)))
+        x = self.fc3(x)
+        return x
+
+def train_model(
+    model,
+    train_loader,
+    val_loader,
+    criterion,
+    optimizer,
+    scheduler,
+    num_epochs=10,
+    device="cpu",
+):
+    train_loss_history = []
+    train_accuracy_history = []
+    val_loss_history = []
+    val_accuracy_history = []
+    best_val_acc = 0.0
+
+    for epoch in range(num_epochs):
+        model.train()
+        epoch_loss = 0.0
+        correct = 0
+        total = 0
+
+        train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Train]")
+        for images, labels in train_pbar:
+            images, labels = images.to(device), labels.to(device)
+
+            optimizer.zero_grad()
+            predictions = model(images)
+            loss = criterion(predictions, labels)
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            _, predicted = torch.max(predictions.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+            train_pbar.set_postfix(
+                {"loss": f"{loss.item():.4f}", "acc": f"{100 * correct / total:.2f}%"}
+            )
+
+        avg_loss = epoch_loss / len(train_loader)
+        accuracy = 100 * correct / total
+        train_loss_history.append(avg_loss)
+        train_accuracy_history.append(accuracy)
+
+        model.eval()
+        val_loss = 0.0
+        val_correct = 0
+        val_total = 0
+
+        with torch.no_grad():
+            val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Val]")
+            for images, labels in val_pbar:
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+
+                val_loss += loss.item()
+                _, predicted = torch.max(outputs.data, 1)
+                val_total += labels.size(0)
+                val_correct += (predicted == labels).sum().item()
+
+                val_pbar.set_postfix(
+                    {
+                        "loss": f"{loss.item():.4f}",
+                        "acc": f"{100 * val_correct / val_total:.2f}%",
+                    }
+                )
+
+        val_avg_loss = val_loss / len(val_loader)
+        val_accuracy = 100 * val_correct / val_total
+        val_loss_history.append(val_avg_loss)
+        val_accuracy_history.append(val_accuracy)
+
+        # 학습률 스케줄러 업데이트
+        scheduler.step()
+
+        print(
+            f"Epoch [{epoch+1}/{num_epochs}], "
+            f"Train Loss: {avg_loss:.4f}, Train Acc: {accuracy:.2f}%, "
+            f"Val Loss: {val_avg_loss:.4f}, Val Acc: {val_accuracy:.2f}%"
+        )
+
+    return (
+        train_loss_history,
+        train_accuracy_history,
+        val_loss_history,
+        val_accuracy_history,
+    )
+
+
+def evaluate_model(model, test_loader, device="cpu"):
+    model.eval()
+    predictions = []
+    actuals = []
+    correct = 0
+    total = 0
+    total_loss = 0.0
+    criterion = nn.CrossEntropyLoss()
+
+    with torch.no_grad():
+        val_pbar = tqdm(test_loader, desc="[Val]")
+        for images, labels in val_pbar:
+            images, labels = images.to(device), labels.to(device)
+            pred = model(images)
+            loss = criterion(pred, labels)
+
+            _, predicted = torch.max(pred.data, 1)
+            predictions.extend(predicted.cpu().numpy())
+            actuals.extend(labels.cpu().numpy())
+
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+            total_loss += loss.item()
+
+            val_pbar.set_postfix(
+                {"loss": f"{loss.item():.4f}", "acc": f"{100 * correct / total:.2f}%"}
+            )
+
+    avg_loss = total_loss / len(test_loader)
+    accuracy = 100 * correct / total
+
+    predictions = np.array(predictions)
+    actuals = np.array(actuals)
+
+    print(f"\n=== 검증 세트 평가 ===")
+    print(f"Loss: {avg_loss:.4f}")
+    print(f"Accuracy: {accuracy:.2f}%")
+    print(f"Correct: {correct}/{total}")
+
+    return predictions, actuals, accuracy, avg_loss
+
+
+def plot_learning_curve(
+    loss_history,
+    accuracy_history,
+    val_loss_history=None,
+    val_accuracy_history=None,
+    title="Training Progress",
+):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+
+    ax1.plot(loss_history, linewidth=2, color="#2E86AB", label="Train Loss")
+    if val_loss_history:
+        ax1.plot(val_loss_history, linewidth=2, color="#A23B72", label="Val Loss")
+    ax1.set_title("Training Loss", fontsize=14, fontweight="bold")
+    ax1.set_xlabel("Epoch", fontsize=12)
+    ax1.set_ylabel("Loss", fontsize=12)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(accuracy_history, linewidth=2, color="#2E86AB", label="Train Acc")
+    if val_accuracy_history:
+        ax2.plot(val_accuracy_history, linewidth=2, color="#A23B72", label="Val Acc")
+    ax2.set_title("Training Accuracy", fontsize=14, fontweight="bold")
+    ax2.set_xlabel("Epoch", fontsize=12)
+    ax2.set_ylabel("Accuracy (%)", fontsize=12)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# 5. 모델 생성
+print("\n[5단계] 모델 생성")
+num_classes = len(class_to_idx)
+model = SimpleLinear(num_classes=num_classes, image_size=image_size).to(device)
+print(f"모델 구조:\n{model}")
+total_params = sum(p.numel() for p in model.parameters())
+print(f"총 파라미터 수: {total_params:,}")
+
+# 6. 손실 함수와 옵티마이저 설정
+print("\n[6단계] 손실 함수와 옵티마이저 설정")
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+print(f"손실 함수: CrossEntropyLoss")
+print(f"옵티마이저: Adam (lr=0.001)")
+print(f"학습률 스케줄러: StepLR (step_size=5, gamma=0.5)")
+
+# 7. 모델 훈련
+print("\n[7단계] 모델 훈련")
+(
+    train_loss_history,
+    train_accuracy_history,
+    val_loss_history,
+    val_accuracy_history,
+) = train_model(
+    model,
+    train_loader,
+    val_loader,
+    criterion,
+    optimizer,
+    scheduler,
+    num_epochs=num_epochs,
+    device=device,
+)
+
+# 8. 모델 평가
+print("\n[8단계] 모델 평가")
+val_predictions, val_actuals, val_accuracy, val_loss = evaluate_model(
+    model, val_loader, device=device
+)
+
+# 9. 평가 및 결과 시각화
+print("\n[9단계] 결과 시각화")
+plot_learning_curve(
+    train_loss_history,
+    train_accuracy_history,
+    val_loss_history,
+    val_accuracy_history,
+    title="Fruit Classification - Linear Model Training Progress",
+)
