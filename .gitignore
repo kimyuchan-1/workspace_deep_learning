@@ -1,3 +1,13 @@
 *.zip
 data/**/*.jpg
 .data/*
+# training artifacts / checkpoints
+**/checkpoint-*/
+**/*.pt
+**/*.pth
+**/*.safetensors
+**/*.bin
+**/optimizer.pt
+**/scheduler.pt
+**/rng_state.pth
+kobart-finetuned/*
